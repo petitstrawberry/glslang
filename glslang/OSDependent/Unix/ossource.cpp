@@ -39,7 +39,7 @@
 
 #include <cstdio>
 
-#if !defined(__Fuchsia__)
+#if !defined(__Fuchsia__) && !defined(__scarlet__)
 #include <sys/resource.h>
 #endif
 
