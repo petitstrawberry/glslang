@@ -34,6 +34,10 @@
 
 #include "../Include/Common.h"
 #include "../Include/PoolAlloc.h"
+#if defined(__scarlet__) && !defined(DISABLE_THREAD_SUPPORT)
+#include <pthread.h>
+#include <cstdlib>
+#endif
 
 // Mostly here for target that do not support threads such as WASI.
 #ifdef DISABLE_THREAD_SUPPORT
@@ -45,6 +49,37 @@
 namespace glslang {
 
 namespace {
+#if defined(__scarlet__) && !defined(DISABLE_THREAD_SUPPORT)
+// Scarlet DSOs use pthread TSD; ELF dynamic TLS is not part of the loader ABI.
+// Retain both the selected pool and the lazy default pool for each thread.
+struct ThreadPools {
+    TPoolAllocator* selected = nullptr;
+    TPoolAllocator fallback;
+};
+pthread_once_t poolOnce = PTHREAD_ONCE_INIT;
+pthread_key_t poolKey;
+
+void DestroyThreadPools(void* value) { delete static_cast<ThreadPools*>(value); }
+void CreatePoolKey()
+{
+    if (pthread_key_create(&poolKey, DestroyThreadPools) != 0) std::abort();
+}
+ThreadPools& GetThreadPools()
+{
+    if (pthread_once(&poolOnce, CreatePoolKey) != 0) std::abort();
+    auto* state = static_cast<ThreadPools*>(pthread_getspecific(poolKey));
+    if (!state) {
+        state = new ThreadPools;
+        if (pthread_setspecific(poolKey, state) != 0) {
+            delete state;
+            std::abort();
+        }
+    }
+    return *state;
+}
+#define threadPoolAllocator GetThreadPools().selected
+TPoolAllocator* GetDefaultThreadPoolAllocator() { return &GetThreadPools().fallback; }
+#else
 THREAD_LOCAL TPoolAllocator* threadPoolAllocator = nullptr;
 
 TPoolAllocator* GetDefaultThreadPoolAllocator()
@@ -52,6 +87,7 @@ TPoolAllocator* GetDefaultThreadPoolAllocator()
     THREAD_LOCAL TPoolAllocator defaultAllocator;
     return &defaultAllocator;
 }
+#endif
 } // anonymous namespace
 
 // Return the thread-specific current pool.
